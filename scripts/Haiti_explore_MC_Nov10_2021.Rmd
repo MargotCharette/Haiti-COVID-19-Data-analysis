@@ -1,0 +1,473 @@
+---
+title: "Haiti COVID-19 exploratory analysis"
+author: "MargotC"
+date: "10/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Haiti COVID-19 data analysis and visualization in R
+
+This markdown is part of an R project which is comprised of R scripts, excel datasets and shapefile documents. All documents are saved in a packaged project format so this script should run on any computer with access to the project. This document provides instructions and code to analyze Haiti's COVID-19 linelist. Training contents were developed using \[the Epidemiologist R handbook\] [\<https://epirhandbook.com>](https://epirhandbook.com){.uri}, which provides a thorough guide for learning to use R in applied field settings.
+
+This document is an R markdown, which comprises of instructions written as chunks of texts as well as chunks of code that can be run using the green arrow in the upper right corner of each chunk. In each code chunk, code is annotated to allow for a better understanding of each step. Annotations are in green and begin with a hashtag (#).
+
+## Preparing your R workspace
+
+In order to clean and analyze data and to produce tables and graphs, we will need to import packages and load libraries in our R workspace. The list below lists the packages that are required to load for this exercise. You can run the script below to download these packages and load their respective libraries to our workspace.
+
+```{r}
+# This script uses the p_load() function from pacman R package, 
+# which installs if package is absent, and loads for use if already installed
+# The code below ensures the package "pacman" is installed
+if (!require("pacman")) install.packages("pacman")
+
+# Packages available from CRAN
+##############################
+pacman::p_load(
+  tidyverse,    # data management + ggplot2 graphics (will load core tidyverse packages such as: ggplot2, dplyr, tidyr)
+  lubridate,    # working with dates/epiweeks
+  skimr,        # summary stats ov variables in dataset
+  rio,          # file import/export
+  here,         # relative filepaths
+  aweek,        # alternative package for working with dates/epiweeks
+  incidence2,   # epicurves of linelist data
+  i2extras,     # supplement to incidence2
+  stringr,      # search and manipulate character strings
+  forcats,      # working with factors
+  RColorBrewer, # Color palettes from colorbrewer2.org
+  janitor,      # data cleaning and tables
+  epikit,       # age_categories() function
+  flextable,    # converting tables to pretty images
+  rmarkdown,    # produce PDFs, Word Documents, Powerpoints, and HTML files
+  gtsummary,    # summary statistics and tests
+  rstatix,      # summary statistics and statistical tests
+  scales,       # easily convert proportions to percents
+  # gis
+  ######
+  sf,             # to manage spatial data using a Simple Feature format
+  tmap,           # to produce simple maps, works for both interactive and static maps
+  spdep           # spatial statistics 
+)
+```
+
+## Importing data and glancing over dataset
+
+A first test to start our analysis is to obtain the data we would like to analyse. We have saved the dataset in the 'data' folder of our R project, so we can import that data easily using the import function from the RIO package. Note that loading data from a csv (comma-delimited) file may take less time than loading an excel xlsx format, thus we have saved the excel data file as csv and will load that version to run our analysis.
+
+```{r}
+# The here package allows to access data within an R project, and to work with relative paths:
+Data_Covid <- import(here("data", "Data_Covid_clean.csv"))
+
+```
+
+There are many ways to obtain an overview of the data we are importing into R. The commands below will allow you to look at the first few records, glance over the structure of the dataset and get an overview of all variables by type.
+
+```{r}
+# See the first few records
+head(Data_Covid)
+# To see the dataset structure and variable types
+str(Data_Covid)
+# Get an overview of variables content by type
+skim(Data_Covid)
+```
+
+## Data cleaning
+
+### Cleaning column (variable) names
+
+Note that some cleaning was done in Excel, notes are included in the excel data file *Data_Covid_clean.xlsx* saved in the data folder of this R project. Variables that were cleaned in excel beforehand include the patient age variable and the dates variables. Note that the cleaning steps performed in Excel could also be performed in R.
+
+The code chunk below simplifies variables names for ease of reference later during our manipulations. It also applies new formats (for example date and integer) to the date and age fields to make sure R recognizes these variables as such.
+
+```{r}
+## See variables (column) names
+names(Data_Covid)
+## Clean column names - removing spaces and special characters which are not allowed in R
+covid_raw <- Data_Covid %>% 
+  janitor::clean_names() %>%
+## add new columns (to have shorter, simpler names and proper dates and integer format)
+mutate(date_visite      = as.Date(data_g_notification_date_visite, format="%Y/%m/%d"),
+       date_notif       = as.Date(data_g_notification_date_notification, format="%Y/%m/%d"),
+       patient_age      = as.integer(patient_age_years),
+       patient_type     = data_g_prelevements_defition_cas,
+       dept_resid       = data_g_patient_departement_residence,
+       commune_resid    = data_g_patient_commune_residence,
+       type_prelevement = data_g_prelevements_pathologie,
+       resultat_covid   = data_g_resultat_resultats_covid_19)
+
+## see the new column names
+names(covid_raw)
+
+```
+
+### Cleaning records for uniform spellings, filter out extreme values
+
+The code below first filters out extreme values (age higher than 110 years) to exclude outliers from our analises. The subset of data excluding these outliers is saved as a new dataset called 'covid_raw'. After that step, a series of spelling check is performed for key variables, to make sure that spelling is uniform for values referring to the same thing within one variable. Note that R is case-sensitive, so 'Negatif' is recognized as a different value than 'negatif'. This is why we need to uniformize capitalization for variables of interest.
+
+```{r}
+# include only age values below 110 years
+covid_raw <- covid_raw %>%
+  filter(patient_age<110)
+
+# cleaning up spelling for sex, COVID outcomes and department of residence
+covid_raw$patient_sex[covid_raw$patient_sex =="feminin" ]<- "Feminin"
+covid_raw$patient_sex[covid_raw$patient_sex =="masculin" ]<- "Masculin"
+covid_raw$resultat_covid[covid_raw$resultat_covid =="negatif" ]<- "Negatif"
+covid_raw$resultat_covid[covid_raw$resultat_covid =="positif" ]<- "Positif"
+covid_raw$dept_resid[covid_raw$dept_resid =="nord" ]<- "Nord"
+covid_raw$dept_resid[covid_raw$dept_resid =="ouest" ]<- "Ouest"
+covid_raw$dept_resid[covid_raw$dept_resid =="sud" ]<- "Sud"
+covid_raw$dept_resid[covid_raw$dept_resid =="nord" ]<- "Nord"
+covid_raw$dept_resid[covid_raw$dept_resid =="Nord_Est" ]<- "Nord-Est"
+covid_raw$dept_resid[covid_raw$dept_resid =="Nord_Ouest" ]<- "Nord-Ouest"
+covid_raw$dept_resid[covid_raw$dept_resid =="Sud_Est" ]<- "Sud-Est"
+covid_raw$dept_resid[covid_raw$dept_resid =="Grand_Anse" ]<- "Grande Anse"
+
+```
+
+### Create a COVID-19 subset dataframe with only COVID-19 positive patients
+
+Creating a data frame with only COVID-19 patients will allow us to analyse data from that subset only, which will be useful to study demographics of people affected and observe any trends in positive cases.
+
+```{r}
+#filter COVID positives and save as new data frame
+covid_positive <- covid_raw %>%
+  filter(resultat_covid=="Positif")
+```
+
+### Adding a categorical age variable to the COVID-positive subset
+
+Age categories are useful for data visualization purposes, to observe any age patterns in incidence. When only using a continuous age variable, it can be harder to see general trends for sub-groups of the population. *Note that the age variable required additional cleaning which was performed in Excel (including parsing the age variable and uniformizing all ages in years).*
+
+```{r}
+## Create age groups within covid_positive data frame
+covid_positive <- covid_positive %>%
+  mutate(
+    # Create categories
+    age_group = case_when(
+      patient_age <= 10            ~ "0-10",
+      patient_age > 10 & patient_age <= 25 ~ "11-25",
+      patient_age > 25 & patient_age <= 40 ~ "26-40",
+      patient_age > 40 & patient_age <= 55 ~ "41-55",
+      patient_age > 55 & patient_age <= 70 ~ "56-70",
+      patient_age > 70             ~ "> 70"
+    ),
+    # Convert to factor
+    age_group = factor(
+      age_group,
+      level = c("0-10", "11-25", "26-40", "41-55", "56-70", "> 70")
+    )
+  )
+```
+
+## Making tables
+
+### Making tables using tabyl
+
+The Tabyl function allows us to visualize quickly raw tabulations that get printed to the console. The 'adorn' arguments are helpful to customize tables by adding percentages, totals and titles to our tables. The code chunck below can be customized to produce additional tables. For further information on the topic of making tables, please refer to \[The Epidemiologist R handbook\] (<https://epirhandbook.com/en/descriptive-tables.html>).
+
+```{r}
+## Table COVID cases by result (positive, negative, incomplete)
+covid_raw %>%                # covid positive linelist
+  tabyl(resultat_covid) %>%  # tabulate counts and proportions by covid result type
+  adorn_pct_formatting() %>% # convert proportions to percents
+  adorn_totals()             # add totals (janitor function)
+
+## Table positive COVID cases (lab confirmed) by sex
+covid_positive %>%      
+  tabyl(patient_sex) %>%
+  adorn_pct_formatting()  %>%
+  adorn_totals()
+
+## Table positive COVID cases by age categories
+covid_positive %>%
+  tabyl(age_group) %>%
+  adorn_pct_formatting() %>%
+  adorn_totals()
+
+## Cross-tabulate positive COVID cases by age categories and sex (adding totals and percentages)
+covid_positive %>%
+  tabyl(age_group, patient_sex)
+
+## Cross-tabulate positive COVID cases by age categories and sex (adding totals and percentages)
+covid_positive %>%                            # covid-positive linelist
+  tabyl(age_group, patient_sex) %>%           # cross-tabulate counts
+  adorn_totals(where = "row") %>%             # add total row
+  adorn_percentages(denominator = "row") %>%  # convert counts to proportions
+  adorn_pct_formatting(digits = 1)            # convert proportions to percents
+
+## Cross-tabulate positive COVID cases by age categories and sex (keeping counts AND percentages)
+covid_positive %>%                            # covid-positive linelist
+  tabyl(age_group, patient_sex) %>%           # cross-tabulate counts
+  adorn_totals(where = "row") %>%             # add total row
+  adorn_percentages(denominator = "col") %>%  # convert to proportions
+  adorn_pct_formatting() %>%                  # convert to percents
+  adorn_ns(position = "front") %>%            # display as: "count (percent)"
+  adorn_title(                                # adjust titles
+    row_name = "Age Category",
+    col_name = "Gender")
+
+## Table positive COVID cases by department
+covid_positive %>%
+  tabyl(dept_resid) %>%
+  adorn_pct_formatting() %>%                  # convert proportions to percents
+  adorn_totals(where = "row")                 # add total row
+
+```
+
+### Printing tables
+
+While the tables we have produced with tabyl allowed us for quick visualization of our dataset, we might prefer 'prettier' tables to add to presentations, papers, etc. The flextable package allows us to print tables as images that can be exported as .png, jpeg, html, etc.
+
+```{r}
+covid_positive %>%
+  tabyl(age_group, patient_sex) %>% 
+  adorn_totals(where = "col") %>% 
+  adorn_percentages(denominator = "col") %>% 
+  adorn_pct_formatting() %>% 
+  adorn_ns(position = "front") %>% 
+  adorn_title(
+    row_name = "Age Category",
+    col_name = "Gender",
+    placement = "combined") %>% # this is necessary to print as image
+  flextable::flextable() %>%    # convert to pretty image
+  flextable::autofit()          # format to one line per row 
+
+```
+
+## Making graphs
+
+The section below uses ggplot functions to create bar graphs and histograms. This allows us to visualize the distribution of cases by department, and to visualize sex and age distribution of cases. We are using the covid_positive dataset to only look at patients diagnosed with COVID-19. Note that the examples include specific colors to help customization of the graphs - these are optional and can be removed from the code chunk to only use the R standard grey scale. Otherwise, official color names can be found by accessing the following link: \[R color palette\] (<http://applied-r.com/download/6568/>).
+
+```{r}
+# Bar_graph distribution of cases by department
+ggplot(data = covid_positive, mapping = aes(x = dept_resid))+     
+  geom_bar(color = "black") +
+  labs(title = "Distribution of positive COVID cases by department")
+
+# Histogram age distribution
+ggplot(data = covid_positive, mapping = aes(x = patient_age))+ # set data and axes
+  geom_histogram(                                              # display histogram
+    binwidth = 7,                                              # width of bins
+    color = "royalblue",                                       # bin line color
+    fill = "lightblue")+                                       # bin interior color (fill) 
+  labs(title = "Distribution of positive COVID cases by age")
+
+# Bar graph using age groups sub-divided by sex (bar plot, fill to discrete column, color to static value)
+ggplot(data = covid_positive, mapping = aes(x = age_group))+     
+  geom_bar(mapping = aes(fill = patient_sex), color = "black")+
+  scale_fill_manual(                  # Manually specify fill (bar interior color)
+    values = c("Masculin" = "turquoise",# reference values in data to assign colors
+               "Feminin" = "violetred")) +
+  labs(title = "Distribution of positive COVID cases by age categories and sex")
+
+```
+
+## Making Epidemic curves
+
+Epidemic curves can be generated using different time references, such as days, weeks and months. It is important to work with dates that are formatted in R's 'date' format (that is why we formated the date_notif as date in the cleaning process).
+
+```{r}
+# Verify date column is class Date and observe range of values
+ggplot(data=covid_positive)+geom_histogram(aes(x=date_notif))
+```
+
+Plot cases daily using the incidence2 package, following a 2-step process. This 2 step process first includes the creation of an incidence object (time unit of aggregation), and then the plotting of that incidence object.
+
+```{r}
+# Epicurves with incidence2 package
+# First, create an **incidence object**
+epi_day <- incidence(       # create incidence object
+  x = covid_positive,       # dataset
+  date_index = date_notif,  # date column
+  interval = "day"          # date grouping interval
+)
+summary(epi_day)
+# Second, plot the incidence object
+plot(epi_day)+      labs(title = "Daily COVID incidence")
+
+```
+
+Repeat the same 2-step process to plot cases weekly or monthly, specifying the time unit in the interval argument.
+
+```{r}
+# Plot cases weekly
+epi_wk <- incidence(covid_positive, date_notif, interval = "Monday week")
+plot(epi_wk)+      labs(title = "Weekly COVID incidence")
+
+# Plot cases monthly
+epi_month <- incidence(covid_positive, date_notif, interval = "month")
+plot(epi_month)+      labs(title = "Monthly COVID incidence")
+
+```
+
+It can be interesting to include demographic variables as a visualization element to epidemic curves, highlighting for example age or sex patterns.
+
+Let's look at age categories breakdown for instance:
+
+```{r}
+#Create epi curves with sub-categories
+# Create incidence object, with data grouped by age category
+age_outbreak <- incidence(
+  covid_positive,          # dataset
+  date_index = date_notif, # date column
+  interval = "week",       # Monday weekly aggregation of cases
+  groups = age_group,      # age_group is set as a group
+  na_as_group = TRUE)      # missing values assigned their own group
+
+
+## plot the grouped incidence object
+plot(
+  age_outbreak,               # incidence object with age_cat as group
+  fill = age_group)+          # age_cat is used for bar fill color (must have been set as a groups column above)
+  labs(fill = "Age Category") # change legend title from default "age_cat" (this is a ggplot2 modification)
+
+```
+
+Let's look at a breakdown by department:
+
+```{r}
+## Create incidence object, with data grouped by department
+dept_outbreak <- incidence(
+  covid_positive,          
+  date_index = date_notif, 
+  interval = "week",
+  groups = dept_resid,
+  na_as_group = TRUE)
+
+## plot the grouped incidence object
+plot(
+  dept_outbreak,              
+  fill = dept_resid)+
+  labs(fill = "Department of residence")
+```
+
+Another interesting way to visualize patterns within epi curves is to plot subsets of data by either filtering data or generating small multiple plots (facets), each one specific for the chosen category. In the example below, we will look at epi curves specific to different departments.
+
+```{r}
+#Filtered data: To plot the epicurve of a subset of data
+##Filter the dataset
+Ouest_dept <- covid_positive %>%
+  filter(dept_resid == "Ouest")
+##create incidence object using filtered data
+Ouest_dept_outbreak <- incidence(Ouest_dept, date_index = date_notif, interval = "week")
+##Plot the incidence object
+plot(Ouest_dept_outbreak, title = "Weekly case incidence Ouest department")
+
+#Facets/small multiples (One epi curve by department - could be done by any other category too)
+epi_wks_dept_out <- incidence(
+  covid_positive,                # dataset
+  date_index = date_notif,       # date column
+  interval = "month",            # monthly bars  
+  groups = dept_resid)  # both outcome and department are given as grouping columns
+
+# plot
+incidence2::facet_plot(
+  epi_wks_dept_out,      # incidence object
+  facets = dept_resid)   # facet column
+
+```
+
+## Making maps
+
+### Choropleth map for incidence by department
+
+For this section, we will be creating a choropleth map which displays a range of color by geographical area for easy visual reference to high/low numbers associated to specific geographical areas. This processes requires many steps and involves getting additional data, including shapefiles displaying Haiti's administrative boundaries as well as a population dataset, with population counts at the administrative level that interests us. In this case, we will be focusing on admin 1 level data, which is the department level.
+
+For additional help on this topic, please refer to: <https://epirhandbook.com/en/gis-basics.html> *spatial data was obtained from \[the Humanitarian Data Exchange website\] (<https://data.humdata.org/dataset/hti-polbndl-adm1-cnigs-zip?force_layout=desktop>)*
+
+Load administrative baseline shapefiles to our workspace.
+
+```{r}
+## the admin1 (department) shapefile is saved in the gis folder of this project
+admin1_haiti_raw <- read_sf(here("data", "gis", "shp", "admin1_haiti.shp"))
+
+```
+
+Prepare and visualize the administrative 1 dataset to use with our COVID-19 data.
+
+```{r}
+##Clean ADM 1 dataset
+admin1_haiti <- admin1_haiti_raw %>%
+  clean_names() # standardize column names
+names(admin1_haiti)
+##Make sure the admin1 names spelling matches thos of COVID dataset as well as population dataset below
+admin1_haiti$admin1na_1[admin1_haiti$admin1na_1 =="Grande'Anse" ]<- "Grande Anse"
+
+##Display just the administrative boundaries (polygons)
+tm_shape(admin1_haiti) +           # admin boundaries shapefile
+  tm_polygons(col = "#F7F7F7")+    # show polygons in light grey
+  tm_borders(col = "#000000",      # show borders with color and line weight
+             lwd = 2) +
+  tm_text("admin1na_1")            # column text to display for each polygon
+
+```
+
+To calculate incidence by geographical area, we will need to use popuation data per geographical area. In our case, this is for the admin 1 level which is the department level.
+
+```{r}
+##Import population data by admin 1 (obtained from hdx)
+admin1_haiti_pop <- import(here("data", "gis", "population", "population_haiti_admin1.csv")) %>%
+  clean_names()
+
+##Make new dataframe containing counts of cases by administrative unit
+case_dept_resid <- covid_positive %>%
+  as_tibble() %>%                  # convert to tibble for better display
+  group_by(dept_resid) %>%         # group by admin unit (department) 
+  summarise(cases = n()) %>%       # summarize and count rows for each department
+  arrange(desc(cases))             # arrange in descending order 
+
+case_dept_resid                    #print to console for view
+
+##Add population data to the dataframe containing counts by administrative unit
+case_dept_resid <- case_dept_resid %>% 
+    left_join(admin1_haiti_pop,       # add columns from pop dataset
+              by = c("dept_resid" = "admin1na_1")) %>%   # join based on common values across these two columns
+    select(names(case_dept_resid), population) %>%  # keep only important columns, including total population
+    mutate(case_10Kpop = round(cases/population * 10000, 3)) # make new column with case rate per 10000, rounded to 3 decimals
+  
+case_dept_resid       #print to console for view
+
+```
+
+After joining our cases by department dataset to the population dataset, we will join the new dataset to the spatial file for mapping.
+
+```{r}
+##Join the table with the ADM1 shapefile for mapping
+case_dept_resid_sf <- case_dept_resid %>%   # begin with cases & rate by admin unit
+  left_join(admin1_haiti, c("dept_resid" = "admin1na_1")) %>%   # join to shapefile data by common column
+  select(names(case_dept_resid),admin1pcod,admin0name, # keep only certain columns of interest
+         admin1pcod,geometry) %>%    # keep geometry so polygons can be plotted
+  drop_na(geometry) %>%              # drop any empty rows
+  st_as_sf()                         # convert to shapefile
+
+```
+
+After completing all the necessary joins, we can finally map the results.
+
+```{r}
+##Map the results
+
+tmap_mode("plot") # view static map
+
+##Map the number of cases by department
+tm_shape(case_dept_resid_sf) + 
+  tm_polygons("cases") +  # color by number of cases column
+  tm_text("dept_resid")   # labels displayed on map
+
+##Map the number of cases per 10K population
+tmap_mode("plot")             # static viewing mode
+
+# plot
+tm_shape(case_dept_resid_sf) +       # plot polygons
+  tm_polygons("case_10Kpop",         # color by column containing case rate
+              breaks=c(0, 3, 7, 13), # define break points for colors
+              palette = "Purples"    # use a purple color palette
+  ) +
+  tm_text("dept_resid")              # display text for labels
+
+```
