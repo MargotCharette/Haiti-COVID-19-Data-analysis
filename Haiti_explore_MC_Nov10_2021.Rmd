@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Haiti COVID-19 data analysis and visualization in R
 
-This markdown is part of an R project which is comprised of R scripts, excel datasets and shapefile documents. All documents are saved in a packaged project format so this script should run on any computer with access to the project. This document provides instructions and code to analyze Haiti's COVID-19 linelist. Training contents were developed using \[the Epidemiologist R handbook\] [\<https://epirhandbook.com>](https://epirhandbook.com){.uri}, which provides a thorough guide for learning to use R in applied field settings.
+This markdown is part of an R project which is comprised of R scripts, excel datasets and shapefile documents. All documents are saved in a packaged project format so this script should run on any computer with access to the project. This document provides instructions and code to analyze Haiti's COVID-19 linelist. Training contents were developed using [the Epidemiologist R handbook](https://epirhandbook.com){.uri}, which provides a thorough guide for learning to use R in applied field settings.
 
 This document is an R markdown, which comprises of instructions written as chunks of texts as well as chunks of code that can be run using the green arrow in the upper right corner of each chunk. In each code chunk, code is annotated to allow for a better understanding of each step. Annotations are in green and begin with a hashtag (#).
 
@@ -60,7 +60,7 @@ A first test to start our analysis is to obtain the data we would like to analys
 
 ```{r}
 # The here package allows to access data within an R project, and to work with relative paths:
-Data_Covid <- import(here("data", "Data_Covid_clean.csv"))
+covid_raw <- import(here("data", "raw", "Data_Covid_raw_agecleaned.csv"))
 
 ```
 
@@ -68,26 +68,26 @@ There are many ways to obtain an overview of the data we are importing into R. T
 
 ```{r}
 # See the first few records
-head(Data_Covid)
+head(covid_raw)
 # To see the dataset structure and variable types
-str(Data_Covid)
+str(covid_raw)
 # Get an overview of variables content by type
-skim(Data_Covid)
+skim(covid_raw)
 ```
 
 ## Data cleaning
 
 ### Cleaning column (variable) names
 
-Note that some cleaning was done in Excel, notes are included in the excel data file *Data_Covid_clean.xlsx* saved in the data folder of this R project. Variables that were cleaned in excel beforehand include the patient age variable and the dates variables. Note that the cleaning steps performed in Excel could also be performed in R.
+Note that some cleaning was done in Excel, notes are included in the excel data file *Data_Covid_clean.xlsx* saved in the sub-folder 'raw', within the data folder of this R project. Variables that were cleaned in excel beforehand include the patient age variable and the dates variables. Note that the cleaning steps performed in Excel could also be performed in R.
 
 The code chunk below simplifies variables names for ease of reference later during our manipulations. It also applies new formats (for example date and integer) to the date and age fields to make sure R recognizes these variables as such.
 
 ```{r}
 ## See variables (column) names
-names(Data_Covid)
+names(covid_raw)
 ## Clean column names - removing spaces and special characters which are not allowed in R
-covid_raw <- Data_Covid %>% 
+covid_raw <- covid_raw %>% 
   janitor::clean_names() %>%
 ## add new columns (to have shorter, simpler names and proper dates and integer format)
 mutate(date_visite      = as.Date(data_g_notification_date_visite, format="%Y/%m/%d"),
@@ -129,23 +129,13 @@ covid_raw$dept_resid[covid_raw$dept_resid =="Grand_Anse" ]<- "Grande Anse"
 
 ```
 
-### Create a COVID-19 subset dataframe with only COVID-19 positive patients
-
-Creating a data frame with only COVID-19 patients will allow us to analyse data from that subset only, which will be useful to study demographics of people affected and observe any trends in positive cases.
-
-```{r}
-#filter COVID positives and save as new data frame
-covid_positive <- covid_raw %>%
-  filter(resultat_covid=="Positif")
-```
-
-### Adding a categorical age variable to the COVID-positive subset
+### Adding a categorical age variable
 
 Age categories are useful for data visualization purposes, to observe any age patterns in incidence. When only using a continuous age variable, it can be harder to see general trends for sub-groups of the population. *Note that the age variable required additional cleaning which was performed in Excel (including parsing the age variable and uniformizing all ages in years).*
 
 ```{r}
 ## Create age groups within covid_positive data frame
-covid_positive <- covid_positive %>%
+covid_raw <- covid_raw %>%
   mutate(
     # Create categories
     age_group = case_when(
@@ -164,15 +154,44 @@ covid_positive <- covid_positive %>%
   )
 ```
 
+
+### Create a COVID-19 subset dataframe with only COVID-19 positive patients
+
+Creating a data frame with only COVID-19 patients will allow us to analyse data from that subset only, which will be useful to study demographics of people affected and observe any trends in positive cases.
+
+```{r}
+#filter COVID positives and save as new data frame
+covid_positive_clean <- covid_raw %>%
+  filter(resultat_covid=="Positif")
+```
+
+
+## Saving clean datasets for analyses
+
+A good practice after performing data cleaning steps is to save the clean data in a separate file, to easily distinguish between the raw data and the data that was cleaned in preparation for analyses.
+
+```{r}
+## Here, we will save 2 cleaned datasets: one that includes all patients from the raw dataset, and another one that includes only patients who tested positive for covid-19
+
+##below we will save the clean data including all patients in the original covid dataset
+write.csv(covid_raw, here("data", "clean", "haiti_covid_all_clean.csv"))
+covid_all <- import(here("data", "clean", "haiti_covid_all_clean.csv"))
+  
+## below we will save the clean data including only patients who tested positive for covid-19
+write.csv(covid_positive_clean, here("data", "clean","haiti_covid_positive_clean.csv"))
+covid_positive <- import(here("data", "clean","haiti_covid_positive_clean.csv"))
+
+```
+
 ## Making tables
 
 ### Making tables using tabyl
 
-The Tabyl function allows us to visualize quickly raw tabulations that get printed to the console. The 'adorn' arguments are helpful to customize tables by adding percentages, totals and titles to our tables. The code chunck below can be customized to produce additional tables. For further information on the topic of making tables, please refer to \[The Epidemiologist R handbook\] (<https://epirhandbook.com/en/descriptive-tables.html>).
+The Tabyl function allows us to visualize quickly raw tabulations that get printed to the console. The 'adorn' arguments are helpful to customize tables by adding percentages, totals and titles to our tables. The code chunck below can be customized to produce additional tables. For further information on the topic of making tables, please refer to [The Epidemiologist R handbook] (https://epirhandbook.com/en/descriptive-tables.html).
 
 ```{r}
 ## Table COVID cases by result (positive, negative, incomplete)
-covid_raw %>%                # covid positive linelist
+covid_all %>%                # covid positive linelist
   tabyl(resultat_covid) %>%  # tabulate counts and proportions by covid result type
   adorn_pct_formatting() %>% # convert proportions to percents
   adorn_totals()             # add totals (janitor function)
@@ -273,7 +292,14 @@ Epidemic curves can be generated using different time references, such as days, 
 
 ```{r}
 # Verify date column is class Date and observe range of values
+typeof(covid_positive$date_notif) # Here we notice that date_notif was stored as an integer, so we will need to apply the date format before generating epi curves
+
+covid_positive$date_notif <- ymd(covid_positive$date_notif) # The lubridate 'ymd' function converts the integer variable into a date variable
+
+typeof(covid_positive$date_notif) # To verify whether our date_notif variable is now a date, we re-run typeof and it should return "double", wihch refers to the date format
+
 ggplot(data=covid_positive)+geom_histogram(aes(x=date_notif))
+
 ```
 
 Plot cases daily using the incidence2 package, following a 2-step process. This 2 step process first includes the creation of an incidence object (time unit of aggregation), and then the plotting of that incidence object.
@@ -378,12 +404,15 @@ incidence2::facet_plot(
 
 For this section, we will be creating a choropleth map which displays a range of color by geographical area for easy visual reference to high/low numbers associated to specific geographical areas. This processes requires many steps and involves getting additional data, including shapefiles displaying Haiti's administrative boundaries as well as a population dataset, with population counts at the administrative level that interests us. In this case, we will be focusing on admin 1 level data, which is the department level.
 
-For additional help on this topic, please refer to: <https://epirhandbook.com/en/gis-basics.html> *spatial data was obtained from \[the Humanitarian Data Exchange website\] (<https://data.humdata.org/dataset/hti-polbndl-adm1-cnigs-zip?force_layout=desktop>)*
+For additional help on this topic, please refer to: https://epirhandbook.com/en/gis-basics.html
+*spatial data can be obtained from the [WHO GIS hub](https://gis-who.hub.arcgis.com/pages/detailedboundary). Additional data for mapping can be found on the Humanitarian Data Exchange website: https://data.humdata.org/dataset/hti-polbndl-adm1-cnigs-zip?force_layout=desktop*
+
 
 Load administrative baseline shapefiles to our workspace.
 
 ```{r}
 ## the admin1 (department) shapefile is saved in the gis folder of this project
+
 admin1_haiti_raw <- read_sf(here("data", "gis", "shp", "admin1_haiti.shp"))
 
 ```
@@ -471,3 +500,12 @@ tm_shape(case_dept_resid_sf) +       # plot polygons
   tm_text("dept_resid")              # display text for labels
 
 ```
+
+
+
+## Exporting R markdown output as a html document
+
+In order to save this file as an html document that incorporates the text, code chunks as well as the results (tables, charts, maps), you can click the button 'knit' in the header of the R markdown window. This will generate a html file that will automatically get saved in the root directory of this project (or wherever the R markdown file is saved).
+
+
+

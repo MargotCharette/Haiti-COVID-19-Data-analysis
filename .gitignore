@@ -1,0 +1,12 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+#Ignore raw and clean, but keep folders
+data/raw/*
+data/clean/*
+data/gis/*
+
+#Ignore R history file
+.Rhistory
